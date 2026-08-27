@@ -83,9 +83,12 @@ config at environment variable names, and put either plain values or 1Password
 secret references under those same names in a private `.env` file:
 
 ```bash
-ANKIWEB_EMAIL=op://Personal/AnkiWeb/username
-ANKIWEB_PASSWORD=op://Personal/AnkiWeb/password
+ANKIWEB_EMAIL=op://Vault/Item/username
+ANKIWEB_PASSWORD=op://Vault/Item/password
 ```
+
+`Vault` and `Item` are placeholders; replace them with the names from your
+own 1Password account.
 
 For local development, prefer resolving those references at the process
 boundary with 1Password CLI:
@@ -374,8 +377,8 @@ copyright_confirmed = true
 or private `.env`:
 
 ```bash
-ANKIWEB_EMAIL=op://Personal/AnkiWeb/username
-ANKIWEB_PASSWORD=op://Personal/AnkiWeb/password
+ANKIWEB_EMAIL=op://Vault/Item/username
+ANKIWEB_PASSWORD=op://Vault/Item/password
 ANKIWEB_SOURCE_DECK_ID=1650000000000
 ```
 

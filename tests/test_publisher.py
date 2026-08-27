@@ -85,13 +85,13 @@ class PublisherTests(unittest.TestCase):
     def test_register_deck_id_replaces_only_target_variable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
-            env_file.write_text("ANKIWEB_EMAIL=op://Personal/AnkiWeb/username\nTARGET=old\n", encoding="utf-8")
+            env_file.write_text("ANKIWEB_EMAIL=op://Vault/Item/username\nTARGET=old\n", encoding="utf-8")
 
             register_deck_id(env_file, variable="TARGET", deck_id="123456")
 
             self.assertEqual(
                 env_file.read_text(encoding="utf-8"),
-                "ANKIWEB_EMAIL=op://Personal/AnkiWeb/username\nTARGET=123456\n",
+                "ANKIWEB_EMAIL=op://Vault/Item/username\nTARGET=123456\n",
             )
 
     def test_register_deck_id_rejects_invalid_variable(self) -> None:

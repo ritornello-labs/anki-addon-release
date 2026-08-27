@@ -34,8 +34,8 @@ class CredentialTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "ANKIWEB_EMAIL": "op://Personal/AnkiWeb/username",
-                "ANKIWEB_PASSWORD": "op://Personal/AnkiWeb/password",
+                "ANKIWEB_EMAIL": "op://Vault/Item/username",
+                "ANKIWEB_PASSWORD": "op://Vault/Item/password",
             },
         ):
             credentials = resolve_env_credentials(
@@ -47,7 +47,7 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(credentials.email, "user@example.com")
         self.assertEqual(credentials.password, "secret")
         run.assert_any_call(
-            ["op", "read", "op://Personal/AnkiWeb/username"],
+            ["op", "read", "op://Vault/Item/username"],
             check=False,
             capture_output=True,
             text=True,
@@ -65,8 +65,8 @@ class CredentialTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "ANKIWEB_EMAIL": "op://Personal/AnkiWeb/username",
-                "ANKIWEB_PASSWORD": "op://Personal/AnkiWeb/password",
+                "ANKIWEB_EMAIL": "op://Vault/Item/username",
+                "ANKIWEB_PASSWORD": "op://Vault/Item/password",
             },
         ):
             with self.assertRaisesRegex(PublishError, "ANKIWEB_EMAIL"):
