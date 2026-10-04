@@ -68,6 +68,27 @@ class BrowserHelperTests(unittest.TestCase):
     "set ANKI_ADDON_RELEASE_BROWSER_TESTS=1 with playwright installed to run browser flows",
 )
 class BrowserFlowTests(unittest.TestCase):
+    def test_required_title_waits_for_asynchronous_form_render(self) -> None:
+        from playwright.sync_api import sync_playwright
+        from anki_addon_release.browser import _fill_required_text
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.set_default_timeout(3_000)
+                page.set_content("""<body><script>
+                    setTimeout(() => {
+                        document.body.innerHTML = '<input placeholder="Title">';
+                    }, 600);
+                </script></body>""")
+                _fill_required_text(
+                    page, ('input[placeholder="Title"]',), "Deferred title", field_name="deck title"
+                )
+                self.assertEqual(page.locator('input').input_value(), "Deferred title")
+            finally:
+                browser.close()
+
     def test_login_flow_fills_and_submits_credentials(self) -> None:
         with FakeAnkiWebServer() as server, tempfile.TemporaryDirectory() as tmp:
             result = AnkiWebBrowser(

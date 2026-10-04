@@ -752,7 +752,7 @@ def _fill_optional_text(page: object, candidates: tuple[str, ...], value: str) -
 
 
 def _fill_required_text(page: object, candidates: tuple[str, ...], value: str, *, field_name: str) -> None:
-    if not _fill_optional_text(page, candidates, value):
+    if not _fill_text_after_wait(page, candidates, value):
         raise PublishError(f"could not find {field_name} field")
 
 
