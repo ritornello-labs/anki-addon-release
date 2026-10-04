@@ -315,7 +315,7 @@ class PublishPlanTests(unittest.TestCase):
             with self.assertRaisesRegex(PublishError, "copyright"):
                 build_deck_publish_plan(config, submit=True)
 
-    def test_deck_publish_submit_requires_shared_id_for_public_verification(self) -> None:
+    def test_first_deck_publish_can_discover_its_shared_id_after_submission(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             description = root / "README.md"
@@ -328,8 +328,9 @@ class PublishPlanTests(unittest.TestCase):
                 deck=DeckConfig(source_deck_id="1650000000000", copyright_confirmed=True),
             )
 
-            with self.assertRaisesRegex(PublishError, "shared_id"):
-                build_deck_publish_plan(config, submit=True)
+            plan = build_deck_publish_plan(config, submit=True)
+            self.assertIsNone(plan.shared_id)
+            self.assertTrue(plan.submit)
 
     def test_deck_publish_can_resolve_source_name_through_anki_connect(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

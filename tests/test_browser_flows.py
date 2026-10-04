@@ -249,6 +249,40 @@ class BrowserFlowTests(unittest.TestCase):
             self.assertIn(b"Deck+description", server.last_post_body)
             self.assertIn(b"confirmCopyright=on", server.last_post_body)
 
+    def test_first_deck_share_discovers_and_verifies_new_owner_id(self) -> None:
+        with FakeAnkiWebServer() as server, tempfile.TemporaryDirectory() as tmp:
+            result = AnkiWebBrowser(
+                profile_dir=Path(tmp) / "profile", headless=True, timeout_ms=10_000,
+            ).publish_deck(self._first_deck_plan(server))
+            self.assertEqual(result.status, "submitted")
+            self.assertIn("/shared/info/987654321?cb=", result.final_url)
+            self.assertGreaterEqual(server.public_listing_get_count, 2)
+
+    def test_first_deck_share_refuses_existing_title_before_submit(self) -> None:
+        with FakeAnkiWebServer(existing_deck=True) as server, tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(PublishError, "already has this title"):
+                AnkiWebBrowser(
+                    profile_dir=Path(tmp) / "profile", headless=True, timeout_ms=10_000,
+                ).publish_deck(self._first_deck_plan(server))
+            self.assertEqual(server.post_paths, [])
+
+    def test_first_deck_share_worker_without_new_listing_is_not_success(self) -> None:
+        with FakeAnkiWebServer(create_deck=False) as server, tempfile.TemporaryDirectory() as tmp:
+            with patch("anki_addon_release.browser._DECK_PUBLIC_LISTING_TIMEOUT_MS", 250):
+                with self.assertRaisesRegex(PublishError, "no new owner listing"):
+                    AnkiWebBrowser(
+                        profile_dir=Path(tmp) / "profile", headless=True, timeout_ms=250,
+                    ).publish_deck(self._first_deck_plan(server))
+
+    @staticmethod
+    def _first_deck_plan(server: FakeAnkiWebServer) -> DeckPublishPlan:
+        return DeckPublishPlan(
+            base_url=server.url, share_url=f"{server.url}/decks/share/1650000000000",
+            login_url=f"{server.url}/account/login", source_deck_id="1650000000000",
+            shared_id=None, title="Geography Deck", tags=None, support_url=None,
+            description="Deck description", submit=True, copyright_confirmed=True,
+        )
+
     def test_deck_share_verifies_rendered_description_and_screenshot(self) -> None:
         description = (
             "Map cards for a small geography deck.\n\n"
@@ -402,6 +436,8 @@ class FakeAnkiWebServer:
         owner_listing_image_sources: tuple[str, ...] | None = None,
         public_listing_unavailable: bool = False,
         public_listing_unavailable_delay_ms: int = 0,
+        existing_deck: bool = False,
+        create_deck: bool = True,
     ) -> None:
         self.login_is_logged_in = login_is_logged_in
         self.keep_upload_form_after_post = keep_upload_form_after_post
@@ -414,6 +450,8 @@ class FakeAnkiWebServer:
         self.owner_listing_image_sources = owner_listing_image_sources or public_listing_image_sources
         self.public_listing_unavailable = public_listing_unavailable
         self.public_listing_unavailable_delay_ms = public_listing_unavailable_delay_ms
+        self.existing_deck = existing_deck
+        self.create_deck = create_deck
 
     def __enter__(self) -> FakeAnkiWebServer:
         self.last_post_path = ""
@@ -437,6 +475,11 @@ class FakeAnkiWebServer:
                     body = _account_too_new_page()
                 elif path == "/decks/share/1650000000000":
                     body = _deck_share_form()
+                elif path == "/shared/mine":
+                    rows = ""
+                    if owner.existing_deck or (owner.create_deck and "/decks/share/1650000000000" in owner.post_paths):
+                        rows = '<tr><td><a href="/shared/info/987654321">Info</a></td><td>Geography Deck</td></tr>'
+                    body = f"<html><body><h1>Your Shared Items</h1><table>{rows}</table></body></html>".encode()
                 elif path == "/shared/info/987654321":
                     owner.public_listing_get_count += 1
                     if "session=owner" in handler.headers.get("Cookie", ""):

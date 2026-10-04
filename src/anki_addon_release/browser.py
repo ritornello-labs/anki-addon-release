@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html import unescape
 from pathlib import Path
 import re
@@ -149,11 +149,6 @@ class AnkiWebBrowser:
             raise PublishError("headless deck publishing requires --submit")
         if plan.submit and not plan.copyright_confirmed:
             raise PublishError("deck publishing with --submit requires copyright confirmation")
-        if plan.submit and not plan.shared_id:
-            raise PublishError(
-                "deck publishing with --submit requires ankiweb.shared_id so the public listing can be verified"
-            )
-
         sync_playwright = _sync_playwright()
         with sync_playwright() as playwright:
             context = None
@@ -166,6 +161,13 @@ class AnkiWebBrowser:
                 )
                 page = context.new_page()
                 page.set_default_timeout(self.timeout_ms)
+                previous_items = None
+                if plan.submit and not plan.shared_id:
+                    previous_items = _deck_owner_items(page, plan)
+                    if plan.title in previous_items.values():
+                        raise PublishError(
+                            "an owner listing already has this title; configure its ankiweb.shared_id before updating"
+                        )
                 page.goto(plan.share_url)
                 _wait_for_frontend(page)
                 _raise_known_publish_blockers(page)
@@ -179,6 +181,12 @@ class AnkiWebBrowser:
                         page,
                         timeout_ms=max(self.timeout_ms, _DECK_SHARE_COMPLETION_TIMEOUT_MS),
                     )
+                    if previous_items is not None:
+                        shared_id = _discover_new_deck_listing(
+                            page, plan, previous_items,
+                            timeout_ms=max(self.timeout_ms, _DECK_PUBLIC_LISTING_TIMEOUT_MS),
+                        )
+                        plan = replace(plan, shared_id=shared_id)
                     owner_listing_url = _verify_deck_owner_listing(
                         page,
                         plan,
@@ -470,6 +478,49 @@ def _wait_for_deck_share_completion(page: object, *, timeout_ms: int) -> None:
             body = ""
         detail = f": {body[:500]}" if body else ""
         raise PublishError(f"AnkiWeb did not complete the deck share{detail}") from exc
+
+
+def _deck_owner_items(page: object, plan: DeckPublishPlan) -> dict[str, str]:
+    """Read the authenticated catalog, including each listing's assigned ID."""
+    page.goto(urljoin(plan.base_url.rstrip("/") + "/", "shared/mine"))
+    _wait_for_frontend(page)
+    _raise_known_publish_blockers(page)
+    page.wait_for_function(
+        "() => document.querySelector('table') && document.body.innerText.includes('Your Shared Items')"
+    )
+    rows = page.locator("table tr").evaluate_all(
+        """rows => rows.flatMap(row => {
+            const cells = row.querySelectorAll('td');
+            const link = row.querySelector('a[href*="/shared/info/"]');
+            const match = link?.getAttribute('href')?.match(/\\/shared\\/info\\/(\\d+)(?:[?#]|$)/);
+            return match && cells.length >= 2
+                ? [[match[1], cells[1].innerText.trim()]] : [];
+        })"""
+    )
+    return dict(rows)
+
+
+def _discover_new_deck_listing(
+    page: object, plan: DeckPublishPlan, previous_items: dict[str, str], *, timeout_ms: int
+) -> str:
+    """Require one newly assigned owner ID; worker completion alone is insufficient."""
+    deadline = monotonic() + timeout_ms / 1_000
+    while monotonic() < deadline:
+        items = _deck_owner_items(page, plan)
+        matches = [item for item, title in items.items()
+                   if item not in previous_items and title == plan.title]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise PublishError("multiple new owner listings match the submitted deck title; refusing to guess")
+        remaining_ms = int((deadline - monotonic()) * 1_000)
+        if remaining_ms <= 0:
+            break
+        page.wait_for_timeout(min(_DECK_PUBLIC_LISTING_POLL_MS, remaining_ms))
+    raise PublishError(
+        "AnkiWeb share worker completed, but no new owner listing matched the submitted title; "
+        "inspect the owner catalog before retrying"
+    )
 
 
 def _verify_deck_owner_listing(page: object, plan: DeckPublishPlan, *, timeout_ms: int) -> str:

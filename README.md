@@ -34,6 +34,10 @@ cache-busted listing in a cookie-free browser. It reports `submitted` only when
 the public title, description text, and expected screenshot image URLs match.
 During AnkiWeb's normal copyright-review hold, it reports
 `submitted-pending-public-review` instead of claiming public visibility.
+For a first deck share, omit `ankiweb.shared_id`: the tool snapshots the owner's
+catalog before submission, discovers the newly assigned ID by its exact title,
+and verifies its listing. An existing title requires an explicit shared ID.
+If verification fails after submission, inspect the owner catalog before retrying.
 It is published on PyPI via Trusted Publishing.
 
 ## Install

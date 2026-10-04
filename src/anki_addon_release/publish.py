@@ -162,11 +162,6 @@ def build_deck_publish_plan(
     copyright_confirmed = config.deck.copyright_confirmed or confirm_copyright
     if submit and not copyright_confirmed:
         raise PublishError("deck publishing with --submit requires deck.copyright_confirmed = true or --confirm-copyright")
-    if submit and not config.ankiweb.shared_id:
-        raise PublishError(
-            "deck publishing with --submit requires ankiweb.shared_id so the public listing can be verified"
-        )
-
     share_url = f"{base}{config.deck.share_path}/{source_deck_id}"
     return DeckPublishPlan(
         base_url=base,
