@@ -45,6 +45,12 @@ class BrowserHelperTests(unittest.TestCase):
             ),
         )
 
+    def test_description_markers_keep_parenthesized_source_url_label(self) -> None:
+        self.assertEqual(
+            _description_markers("Map: [TUBS's locator](https://commons.wikimedia.org/wiki/File:World_(equirectangular_180).svg), CC BY-SA 3.0."),
+            ("Map: TUBS's locator, CC BY-SA 3.0.",),
+        )
+
     def test_description_markers_keep_heading_as_its_own_paragraph(self) -> None:
         markers = _description_markers(
             "Map cards.\n\n"
