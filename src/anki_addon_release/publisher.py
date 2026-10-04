@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import sqlite3
 import subprocess
 import tempfile
@@ -193,6 +194,10 @@ def launch_publisher(
 ) -> tuple[subprocess.Popen[str], list[str]]:
     if not publisher_status(paths)["initialized"]:
         raise ReleaseError(f"publisher profile is not initialized: {paths.base}; run publisher init first")
+    if _publisher_port_in_use(anki_connect_port):
+        raise ReleaseError(
+            f"publisher port {anki_connect_port} is already in use; reuse the running Publisher instead of launching another"
+        )
     configure_anki_connect(paths, port=anki_connect_port)
 
     anki_python = default_anki_python(anki_bin)
@@ -209,7 +214,8 @@ def launch_publisher(
         "en",
     ]
     env = os.environ.copy()
-    env["ANKI_SINGLE_INSTANCE_KEY"] = f"anki-addon-release-publisher-{uuid.uuid4().hex}"
+    instance = uuid.uuid5(uuid.NAMESPACE_URL, f"{paths.base.resolve()}#{paths.profile}")
+    env["ANKI_SINGLE_INSTANCE_KEY"] = f"anki-addon-release-publisher-{instance.hex}"
     for name in login_credential_env_names or ():
         env.pop(name, None)
     if login_credentials is not None or check_database or clean_media:
@@ -231,6 +237,16 @@ def launch_publisher(
         start_new_session=True,
     )
     return process, command
+
+
+def _publisher_port_in_use(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            return True
+    except ConnectionRefusedError:
+        return False
+    except OSError as exc:
+        raise ReleaseError(f"cannot establish whether Publisher port {port} is available") from exc
 
 
 def anki_connect_request(url: str, action: str, **params: object) -> object:

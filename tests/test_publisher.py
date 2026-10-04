@@ -23,6 +23,11 @@ from anki_addon_release.publisher import (
 
 
 class PublisherTests(unittest.TestCase):
+    def setUp(self) -> None:
+        port_check = patch("anki_addon_release.publisher._publisher_port_in_use", return_value=False)
+        port_check.start()
+        self.addCleanup(port_check.stop)
+
     def test_prune_plan_retains_requested_roots_and_their_children(self) -> None:
         decks = {
             "Default": "1",
@@ -156,6 +161,23 @@ class PublisherTests(unittest.TestCase):
             self.assertIn("publisher_run_anki.py", command[1])
             self.assertEqual(command[-4:], ["-p", "Publisher", "--lang", "en"])
             self.assertEqual(popen.call_args.kwargs["env"]["ANKI_SINGLE_INSTANCE_KEY"].startswith("anki-addon-release-publisher-"), True)
+            first_key = popen.call_args.kwargs["env"]["ANKI_SINGLE_INSTANCE_KEY"]
+            with patch("anki_addon_release.publisher.default_anki_python", return_value="/anki/python"), patch(
+                "anki_addon_release.publisher.subprocess.Popen", return_value=process
+            ) as again:
+                launch_publisher(paths, anki_bin="/anki/anki")
+            self.assertEqual(again.call_args.kwargs["env"]["ANKI_SINGLE_INSTANCE_KEY"], first_key)
+
+    def test_launch_refuses_an_already_running_publisher(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            paths = PublisherPaths(base=Path(temporary), profile="Publisher")
+            (paths.base / "prefs21.db").write_bytes(b"prefs")
+            with patch("anki_addon_release.publisher._publisher_port_in_use", return_value=True), patch(
+                "anki_addon_release.publisher.subprocess.Popen"
+            ) as popen:
+                with self.assertRaisesRegex(ReleaseError, "already in use"):
+                    launch_publisher(paths, anki_bin="/anki/anki")
+            popen.assert_not_called()
 
     def test_launch_can_request_database_check_in_publisher_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

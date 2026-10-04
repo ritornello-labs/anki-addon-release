@@ -38,6 +38,8 @@ For a first deck share, omit `ankiweb.shared_id`: the tool snapshots the owner's
 catalog before submission, discovers the newly assigned ID by its exact title,
 and verifies its listing. An existing title requires an explicit shared ID.
 If verification fails after submission, inspect the owner catalog before retrying.
+Publisher launches use a stable instance key and refuse an occupied Publisher
+port, preventing multiple processes from opening the same staging collection.
 It is published on PyPI via Trusted Publishing.
 
 ## Install
