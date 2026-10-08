@@ -53,6 +53,10 @@ MEDIA = {
 }
 
 
+def requires_visual_review(path: str, data: bytes) -> bool:
+    return PurePosixPath(path).suffix.lower() in {*MEDIA, ".mp4"} or data[4:8] == b"ftyp"
+
+
 def git(*args: str) -> bytes:
     return subprocess.run(["git", *args], check=True, capture_output=True).stdout
 
@@ -203,6 +207,91 @@ def compressed_reasons(path: str, data: bytes, depth: int) -> set[str]:
     return content_reasons(str(PurePosixPath(path).with_suffix("")), payload, depth + 1)
 
 
+
+def mp4_reasons(data: bytes) -> set[str]:
+    """Inspect bounded, nonfragmented MP4 boxes; unknown extensions fail closed.
+
+    Media samples still require human visual review. Metadata and padding are
+    inspected separately so a valid container is not a blanket binary exemption.
+    Box layout: https://developer.apple.com/documentation/quicktime-file-format/atoms
+    """
+    containers = {b"moov", b"trak", b"mdia", b"minf", b"dinf", b"stbl", b"edts",
+                  b"udta", b"meta", b"ilst", b"\xa9too"}
+    leaves = {b"mvhd", b"tkhd", b"elst", b"mdhd", b"hdlr", b"vmhd", b"smhd",
+              b"dref", b"stsd", b"stts", b"stss", b"ctts", b"stsc", b"stsz",
+              b"stco", b"co64"}
+    brands = {b"isom", b"iso2", b"avc1", b"mp41", b"mp42", b"M4V "}
+    reasons = set()
+    count = 0
+
+    def boxes(start, end, depth=0):
+        nonlocal count
+        if depth > 16:
+            raise ValueError("box nesting limit")
+        types = []
+        while start < end:
+            count += 1
+            if count > 100000 or end - start < 8:
+                raise ValueError("invalid box header")
+            size = int.from_bytes(data[start:start + 4], "big")
+            kind = data[start + 4:start + 8]
+            header = 8
+            if size == 1:
+                if end - start < 16:
+                    raise ValueError("truncated extended size")
+                size = int.from_bytes(data[start + 8:start + 16], "big")
+                header = 16
+            elif size == 0:
+                if depth != 0 or kind != b"mdat":
+                    raise ValueError("unsupported zero size")
+                size = end - start
+            if size < header or size > end - start:
+                raise ValueError("invalid box size")
+            payload_start, stop = start + header, start + size
+            types.append(kind)
+            if depth == 0 and kind not in {b"ftyp", b"moov", b"mdat", b"free"}:
+                reasons.add("unsupported-mp4-box")
+            elif kind == b"ftyp" and depth == 0:
+                payload = data[payload_start:stop]
+                if len(payload) < 8 or len(payload) % 4 or payload[:4] not in brands:
+                    raise ValueError("invalid file type")
+                if any(payload[i:i + 4] not in brands for i in range(8, len(payload), 4)):
+                    reasons.add("unsupported-mp4-brand")
+            elif kind == b"mdat" and depth == 0:
+                if stop == payload_start:
+                    raise ValueError("empty media samples")
+            elif kind == b"free":
+                payload = data[payload_start:stop]
+                if payload.strip(b"\0"):
+                    reasons.update(content_reasons("padding.txt", payload))
+            elif kind in containers:
+                if kind == b"meta":
+                    if data[payload_start:payload_start + 4] != b"\0" * 4:
+                        raise ValueError("unsupported metadata version")
+                    payload_start += 4
+                children = boxes(payload_start, stop, depth + 1)
+                if kind == b"moov" and not {b"mvhd", b"trak"} <= set(children):
+                    raise ValueError("incomplete movie metadata")
+            elif kind == b"data":
+                # Apple-style text metadata: type indicator and locale precede UTF-8.
+                if stop - payload_start < 8 or data[payload_start:payload_start + 4] != b"\0\0\0\1":
+                    reasons.add("unsupported-mp4-metadata")
+                else:
+                    reasons.update(content_reasons("metadata.txt", data[payload_start + 8:stop]))
+            elif kind not in leaves:
+                reasons.add("unsupported-mp4-box")
+            start = stop
+        return types
+
+    try:
+        top = boxes(0, len(data))
+        if not top or top[0] != b"ftyp" or any(top.count(k) != 1 for k in (b"ftyp", b"moov", b"mdat")):
+            raise ValueError("incomplete movie")
+    except (ValueError, RecursionError):
+        reasons.add("invalid-media-format")
+    return reasons
+
+
 def content_reasons(path: str, data: bytes, depth: int = 0) -> set[str]:
     reasons = {"private-artifact-path"} if private_path(path) else set()
     if len(data) > MAX_BYTES:
@@ -224,6 +313,16 @@ def content_reasons(path: str, data: bytes, depth: int = 0) -> set[str]:
             return reasons | archive_reasons(path, data, depth)
         except Exception:
             return reasons | {"uninspectable-archive"}
+    if suffix == ".mp4" or data[4:8] == b"ftyp":
+        return reasons | mp4_reasons(data)
+    # Inspect recognizable image bytes even when an immutable public URL has
+    # a historical image-extension mismatch; font/unknown binaries remain blocked.
+    if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+        for image_suffix in (".png", ".jpg", ".gif", ".webp"):
+            if data.startswith(MEDIA[image_suffix]):
+                if image_suffix == ".webp" and data[8:12] != b"WEBP":
+                    return reasons | {"invalid-media-format"}
+                return reasons
     if suffix in MEDIA and data.startswith(MEDIA[suffix]):
         if suffix == ".webp" and data[8:12] != b"WEBP":
             return reasons | {"invalid-media-format"}
@@ -346,7 +445,7 @@ def main(argv=None) -> int:
                 data = path.read_bytes()
                 reasons = content_reasons(path.name, data)
                 if (
-                    path.suffix.lower() in MEDIA
+                    requires_visual_review(path.name, data)
                     and hashlib.sha256(data).hexdigest() not in args.reviewed_media_sha256
                 ):
                     reasons.add("visual-review-required")
