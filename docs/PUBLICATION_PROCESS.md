@@ -33,7 +33,10 @@ APKG databases. Review logs and non-new scheduling are rejected. Nonfragmented M
 metadata/padding inspection; unknown boxes, brands and binary metadata fail closed.
 Media samples require visual review. Recognizable image bytes are inspected even
 if a legacy image URL has a mismatched image suffix. MP4 upload receipts require
-the exact reviewed hash, just like images. Modern compressed
+the exact reviewed hash, just like images. Metadata-free MPEG-1/2 Layer III MP3 streams have bounded frame validation;
+ID3/APE tags, trailing bytes and unsupported frames fail closed. Audio content
+still needs media QA. See [RFC 3119](https://www.rfc-editor.org/rfc/rfc3119).
+Modern compressed
 Anki collections, unknown binary formats, corrupt or oversized archives fail
 closed. This is a known-signature check, not a universal personal-data classifier.
 
