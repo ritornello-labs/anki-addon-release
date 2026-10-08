@@ -292,6 +292,49 @@ def mp4_reasons(data: bytes) -> set[str]:
     return reasons
 
 
+
+def mp3_reasons(data: bytes) -> set[str]:
+    """Bounded MPEG-1/2 Layer III streams; metadata tags fail closed.
+
+    Frame layout follows RFC 3119 section 2. No ID3/APE tags, trailing
+    padding or free-format frames are accepted. Compressed audio content
+    still requires ordinary media QA; this validates the container only.
+    """
+    if len(data) > MAX_BYTES:
+        return {"media-size-limit"}
+    pos, count, stream = 0, 0, None
+    bitrates = {
+        3: (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320),
+        2: (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160),
+    }
+    while pos < len(data):
+        if len(data) - pos < 4:
+            return {"invalid-mp3-frame"}
+        header = int.from_bytes(data[pos:pos + 4], "big")
+        version, layer = (header >> 19) & 3, (header >> 17) & 3
+        rate_index, sample_index = (header >> 12) & 15, (header >> 10) & 3
+        if (header >> 21 != 0x7FF or version not in bitrates or layer != 1
+                or rate_index in (0, 15) or sample_index == 3 or header & 3 == 2):
+            return {"unsupported-mp3-frame"}
+        sample_rate = (44100, 48000, 32000)[sample_index] // (1 if version == 3 else 2)
+        mono = (header >> 6) & 3 == 3
+        shape = (version, sample_rate, mono)
+        if stream is not None and shape != stream:
+            return {"inconsistent-mp3-stream"}
+        stream = shape
+        frame_size = ((144000 if version == 3 else 72000)
+                      * bitrates[version][rate_index] // sample_rate + ((header >> 9) & 1))
+        crc_size = 0 if (header >> 16) & 1 else 2
+        side_size = (17 if mono else 32) if version == 3 else (9 if mono else 17)
+        if frame_size < 4 + crc_size + side_size or pos + frame_size > len(data):
+            return {"invalid-mp3-frame"}
+        pos += frame_size
+        count += 1
+        if count > 1000000:
+            return {"media-frame-limit"}
+    return set() if count >= 2 else {"invalid-mp3-stream"}
+
+
 def content_reasons(path: str, data: bytes, depth: int = 0) -> set[str]:
     reasons = {"private-artifact-path"} if private_path(path) else set()
     if len(data) > MAX_BYTES:
@@ -313,6 +356,8 @@ def content_reasons(path: str, data: bytes, depth: int = 0) -> set[str]:
             return reasons | archive_reasons(path, data, depth)
         except Exception:
             return reasons | {"uninspectable-archive"}
+    if suffix == ".mp3":
+        return reasons | mp3_reasons(data)
     if suffix == ".mp4" or data[4:8] == b"ftyp":
         return reasons | mp4_reasons(data)
     # Inspect recognizable image bytes even when an immutable public URL has

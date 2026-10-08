@@ -477,3 +477,48 @@ class GitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Mp3ValidationTests(unittest.TestCase):
+    @staticmethod
+    def frame(version=3, rate=5, sample=0, padding=0, mono=True, crc=False):
+        header = (0x7FF << 21 | version << 19 | 1 << 17 | (not crc) << 16
+                  | rate << 12 | sample << 10 | padding << 9 | (3 if mono else 0) << 6)
+        rates = (0,32,40,48,56,64,80,96,112,128,160,192,224,256,320) if version == 3 else (0,8,16,24,32,40,48,56,64,80,96,112,128,144,160)
+        size = ((144000 if version == 3 else 72000) * rates[rate]
+                // ((44100,48000,32000)[sample] // (1 if version == 3 else 2)) + padding)
+        return header.to_bytes(4, "big") + bytes(size - 4)
+
+    def test_generated_mpeg1_and_mpeg2_streams_pass(self):
+        for version in (2,3):
+            for sample in range(3):
+                for mono in (True,False):
+                    audio = self.frame(version=version,sample=sample,mono=mono,crc=True) + self.frame(version=version,sample=sample,mono=mono,padding=1)
+                    self.assertEqual(guard.content_reasons("generated.mp3",audio),set())
+
+    def test_variable_bitrate_passes_without_changing_stream_shape(self):
+        self.assertEqual(guard.mp3_reasons(self.frame(rate=5)+self.frame(rate=9)),set())
+
+    def test_truncated_or_single_frame_and_trailing_bytes_fail(self):
+        audio=self.frame()*2
+        for invalid in (b"",self.frame(),audio[:-1],audio+b"\0",audio+b"TAG"+bytes(125)):
+            self.assertTrue(guard.mp3_reasons(invalid))
+
+    def test_id3_and_other_uninspectable_tags_fail(self):
+        audio=self.frame()*2
+        for prefix in (b"ID3\4\0\0"+bytes(4),b"APETAGEX"+bytes(24)):
+            self.assertTrue(guard.mp3_reasons(prefix+audio))
+
+    def test_reserved_headers_and_mixed_stream_shapes_fail(self):
+        audio=self.frame()*2
+        for mask in (3 << 17,3 << 10,15 << 12):
+            first=(int.from_bytes(audio[:4],"big")|mask).to_bytes(4,"big")
+            self.assertTrue(guard.mp3_reasons(first+audio[4:]))
+        self.assertTrue(guard.mp3_reasons(self.frame()+self.frame(sample=1)))
+        self.assertTrue(guard.mp3_reasons(self.frame()+self.frame(mono=False)))
+
+    def test_audio_keeps_secret_and_personal_path_checks(self):
+        data=bytearray(self.frame()*2)
+        path=b"/"+b"home"+b"/"+b"fixture"+b"/file"
+        data[30:30+len(path)]=path
+        self.assertIn("personal-home-path",guard.content_reasons("generated.mp3",bytes(data)))
