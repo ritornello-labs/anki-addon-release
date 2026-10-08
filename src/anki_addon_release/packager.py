@@ -7,6 +7,7 @@ import zipfile
 
 from .config import ReleaseConfig
 from .errors import PackageError
+from .publication_receipt import prepare
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,9 @@ def write_package(plan: PackagePlan) -> Path:
         if artifact_name in planned_names:
             raise PackageError("artifact path would be included in its own archive")
 
+    receipt = plan.artifact_path.with_suffix(plan.artifact_path.suffix + ".publication.json")
+    receipt.unlink(missing_ok=True)
+
     if plan.artifact_path.exists():
         plan.artifact_path.unlink()
 
@@ -73,6 +77,13 @@ def write_package(plan: PackagePlan) -> Path:
     if bad_file is not None:
         raise PackageError(f"zip integrity check failed for {bad_file}")
 
+    try:
+        result = prepare(plan.artifact_path, set())
+    except Exception:
+        plan.artifact_path.unlink(missing_ok=True)
+        raise PackageError("Publication check rejected the package; run anki-publication-check locally for details") from None
+    import json
+    receipt.write_text(json.dumps(result, indent=2) + "\n")
     return plan.artifact_path
 
 

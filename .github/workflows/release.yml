@@ -14,6 +14,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check publication before building
+        env:
+          PYTHONPATH: src
+          PUBLICATION_BASE_REF: refs/remotes/origin/${{ github.event.repository.default_branch }}
+        run: |
+          if ! python3 -m anki_addon_release.publication --ci >/dev/null 2>&1; then
+            echo "Publication check failed. Run the checker locally for details."
+            exit 1
+          fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -27,6 +39,17 @@ jobs:
 
       - name: Build sdist and wheel
         run: uv build
+
+      - name: Check exact distribution bytes
+        env:
+          PYTHONPATH: src
+        run: |
+          for artifact in dist/*; do
+            if ! python3 -m anki_addon_release.publication --artifact "$artifact" >/dev/null 2>&1; then
+              echo 'Distribution publication check failed. Run the checker locally for details.'
+              exit 1
+            fi
+          done
 
       - name: Upload dist
         uses: actions/upload-artifact@v4

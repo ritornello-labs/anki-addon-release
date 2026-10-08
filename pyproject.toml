@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anki-addon-release"
-version = "0.2.4"
+version = "0.2.5"
 description = "Release helper for Anki add-ons and shared decks."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,6 +34,9 @@ browser = [
 
 [project.scripts]
 anki-addon-release = "anki_addon_release.cli:main"
+anki-publication-check = "anki_addon_release.publication:main"
+anki-publication-receipt = "anki_addon_release.publication_receipt:main"
+anki-publication-hooks = "anki_addon_release.publication_hooks:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

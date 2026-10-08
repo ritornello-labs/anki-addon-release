@@ -544,3 +544,10 @@ One-time setup on PyPI (Account -> Publishing -> Add a pending publisher):
 - Add saved HTML/screenshot diagnostics on every browser failure.
 - Add public artifact verification by downloading/installing the published add-on/deck into a disposable Anki profile, likely composed with `anki-addon-workbench`.
 - Expand real-world compatibility coverage across more AnkiWeb form variants.
+
+## Publication safety
+
+Version 0.2.5 adds shared staged-object, outgoing-history and release-artifact
+checks. Add-on packages are checked automatically; Publisher backups must stay
+outside Git. See [the publication process](docs/PUBLICATION_PROCESS.md) for local
+hook setup, quiet CI, exact-byte receipts and rollout requirements.
