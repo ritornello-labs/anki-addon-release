@@ -16,6 +16,7 @@ import uuid
 import zipfile
 
 from .errors import ReleaseError
+from .private_artifacts import validate_private_path
 
 
 ANKI_CONNECT_PACKAGE = "2055492159"
@@ -156,10 +157,13 @@ def backup_publisher_collection(paths: PublisherPaths, *, output: Path | None = 
     if output is None:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         output = paths.backup_dir / f"{paths.profile}-{timestamp}.zip"
-    output = output.resolve()
+    try:
+        output = validate_private_path(output)
+    except ValueError:
+        raise ReleaseError("Publisher backups must be outside Git checkouts") from None
     if output.exists():
         raise ReleaseError(f"backup already exists: {output}")
-    output.parent.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     with tempfile.TemporaryDirectory(prefix="anki-addon-release-backup-") as temporary:
         snapshot = Path(temporary) / "collection.anki2"
@@ -174,7 +178,10 @@ def backup_publisher_collection(paths: PublisherPaths, *, output: Path | None = 
         }
         # Backups are a safety checkpoint before moving or deleting decks.  Store
         # them directly so large media collections finish promptly and reliably.
-        with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_STORED) as archive:
+        descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as destination, zipfile.ZipFile(
+            destination, "w", compression=zipfile.ZIP_STORED
+        ) as archive:
             archive.write(snapshot, "collection.anki2")
             for file in media_files:
                 archive.write(file, file.relative_to(paths.profile_dir).as_posix())

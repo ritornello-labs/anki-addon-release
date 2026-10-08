@@ -25,3 +25,10 @@ Keep the package independent from `anki-addon-workbench`. The two tools should c
 - Tests should use `unittest` unless a stronger test dependency becomes worthwhile.
 - When adding dependencies, keep the 7-day release-age policy in `pyproject.toml` and re-resolve any lockfile.
 
+
+## Publication safety
+
+Follow `docs/PUBLICATION_PROCESS.md`. Keep live snapshots, recovery packages and
+audit reports outside Git. Install the shared local hooks before public pushes,
+check exact upload bytes, and keep public CI output generic. Unsupported formats
+block publication until inspection support and regression tests exist.

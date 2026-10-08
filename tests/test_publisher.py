@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import MagicMock, call, patch
@@ -68,6 +69,20 @@ class PublisherTests(unittest.TestCase):
             ],
         )
 
+    def test_backup_rejects_git_output_before_creating_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = PublisherPaths(base=root / "publisher", profile="Publisher")
+            paths.profile_dir.mkdir(parents=True)
+            paths.collection_path.touch()
+            checkout = root / "checkout"
+            checkout.mkdir()
+            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+            output = checkout / "backup.zip"
+            with self.assertRaisesRegex(ReleaseError, "outside Git"):
+                backup_publisher_collection(paths, output=output)
+            self.assertFalse(output.exists())
+
     def test_backup_contains_consistent_database_media_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -80,6 +95,7 @@ class PublisherTests(unittest.TestCase):
             (paths.media_dir / "map.png").write_bytes(b"image")
 
             backup = backup_publisher_collection(paths)
+            self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
 
             with zipfile.ZipFile(backup) as archive:
                 self.assertEqual(set(archive.namelist()), {"collection.anki2", "collection.media/map.png", "publisher-backup.json"})

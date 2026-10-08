@@ -7,6 +7,7 @@ import unittest
 import zipfile
 
 from anki_addon_release.config import ReleaseConfig
+from anki_addon_release.errors import PackageError
 from anki_addon_release.packager import build_plan, inspect_archive, write_package
 
 
@@ -37,6 +38,22 @@ class PackagerTests(unittest.TestCase):
 
             with zipfile.ZipFile(artifact) as archive:
                 self.assertEqual(sorted(archive.namelist()), ["__init__.py", "manifest.json"])
+
+    def test_private_payload_rejected_without_artifact_or_success_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "manifest.json").write_text('{"name":"Fixture"}')
+            (root / "renamed.txt").write_text('{"noteIds":[1],"cardIds":[2]}')
+            config = ReleaseConfig(project_root=root, source_dir=root, manifest=root / "manifest.json",
+                artifact_dir=root / "dist", artifact_name="fixture.ankiaddon",
+                include=("manifest.json", "renamed.txt"))
+            receipt = config.artifact_path.with_suffix(".ankiaddon.publication.json")
+            receipt.parent.mkdir()
+            receipt.write_text('{"publication_check":"passed"}')
+            with self.assertRaises(PackageError):
+                write_package(build_plan(config))
+            self.assertFalse(config.artifact_path.exists())
+            self.assertFalse(receipt.exists())
 
     def test_include_list_limits_packaged_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
