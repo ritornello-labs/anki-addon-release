@@ -238,6 +238,63 @@ class ContentTests(unittest.TestCase):
             prepare(p, {hashlib.sha256(p.read_bytes()).hexdigest()})
 
 
+class MP4Tests(unittest.TestCase):
+    @staticmethod
+    def box(kind, payload=b"", extended=False):
+        if extended:
+            return b"\0\0\0\1" + kind + (len(payload) + 16).to_bytes(8, "big") + payload
+        return (len(payload) + 8).to_bytes(4, "big") + kind + payload
+
+    def movie(self, metadata=b"Synthetic encoder", extra=b"", extended=False):
+        box = self.box
+        text = box(b"data", b"\0\0\0\1" + b"\0" * 4 + metadata)
+        meta = box(b"meta", b"\0" * 4 + box(b"ilst", box(b"\xa9too", text)))
+        moov = box(b"moov", box(b"mvhd", b"\0" * 20) + box(b"trak", box(b"tkhd", b"\0" * 20)) + box(b"udta", meta))
+        return box(b"ftyp", b"isom\0\0\0\0isomiso2avc1mp41") + moov + extra + box(b"mdat", b"\0\xff\0\xff", extended)
+
+    def test_bounded_mp4_and_extended_sizes(self):
+        for extended in (False, True):
+            self.assertEqual(guard.content_reasons("demo.mp4", self.movie(extended=extended)), set())
+            self.assertEqual(guard.content_reasons("renamed.bin", self.movie(extended=extended)), set())
+
+    def test_text_metadata_and_padding_are_inspected(self):
+        for payload, reason in ((b"ghp_" + b"X" * 36, "credential-signature"),
+                                (b'{"noteIds":[1],"cardIds":[2]}', "live-collection-structure"),
+                                (b"/" + b"Users/fixture/private", "personal-home-path")):
+            self.assertIn(reason, guard.content_reasons("demo.mp4", self.movie(payload)))
+            self.assertIn(reason, guard.content_reasons("demo.mp4", self.movie(extra=self.box(b"free", payload))))
+
+    def test_unknown_boxes_and_binary_metadata_fail(self):
+        self.assertIn("unsupported-mp4-box", guard.content_reasons("demo.mp4", self.movie(extra=self.box(b"uuid", b"payload"))))
+        self.assertIn("unsupported-binary", guard.content_reasons("demo.mp4", self.movie(b"\0\xff")))
+
+    def test_truncated_corrupt_and_missing_boxes_fail(self):
+        movie = self.movie()
+        for data in (b"not a movie", movie[:-1], movie + b"x", movie[:32],
+                     b"\0\0\0\1ftyp", b"\0\0\0\4ftyp", movie.replace(b"isom", b"fake")):
+            self.assertTrue(guard.content_reasons("demo.mp4", data))
+
+    def test_nested_limits_fail(self):
+        payload = self.box(b"mvhd")
+        for _ in range(18):
+            payload = self.box(b"udta", payload)
+        self.assertIn("invalid-media-format", guard.content_reasons("demo.mp4", self.movie(extra=self.box(b"moov", payload))))
+
+    def test_image_extension_mismatch_uses_recognized_bytes(self):
+        self.assertEqual(guard.content_reasons("legacy.png", b"\xff\xd8\xffpublic image"), set())
+        self.assertIn("credential-signature", guard.content_reasons("legacy.png", b"\xff\xd8\xffghp_" + b"X" * 36))
+        self.assertIn("unsupported-binary", guard.content_reasons("unknown.png", b"\xff\0unknown"))
+
+    def test_mp4_receipt_requires_exact_visual_review_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "demo.mp4"
+            path.write_bytes(self.movie())
+            with self.assertRaises(ValueError):
+                prepare(path, set())
+            receipt = prepare(path, {hashlib.sha256(path.read_bytes()).hexdigest()})
+            self.assertEqual(receipt["visual_review"], "approved")
+
+
 class GitTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

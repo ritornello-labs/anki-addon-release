@@ -11,14 +11,14 @@ import hashlib
 import json
 from pathlib import Path
 
-from .publication import MEDIA, content_reasons
+from .publication import content_reasons, requires_visual_review
 
 
 def prepare(artifact: Path, reviewed: set[str]) -> dict:
     data = artifact.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
     reasons = content_reasons(artifact.name, data)
-    if artifact.suffix.lower() in MEDIA and digest not in reviewed:
+    if requires_visual_review(artifact.name, data) and digest not in reviewed:
         reasons.add("visual-review-required")
     if reasons:
         raise ValueError("Release artifact rejected; run the local publication checker for details")
@@ -29,7 +29,7 @@ def prepare(artifact: Path, reviewed: set[str]) -> dict:
         "sha256": digest,
         "bytes": len(data),
         "publication_check": "passed",
-        "visual_review": "approved" if artifact.suffix.lower() in MEDIA else "not-applicable",
+        "visual_review": "approved" if requires_visual_review(artifact.name, data) else "not-applicable",
     }
 
 

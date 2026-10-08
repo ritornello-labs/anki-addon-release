@@ -29,7 +29,11 @@ including files added and deleted between commits. Unknown ancestry means more
 scanning; failures block publication. Checks cover forbidden recovery paths,
 recognizable renamed Anki snapshots, several credential signatures, personal home
 paths, LFS pointers, symlinks/submodules, bounded ZIP/gzip/tar archives, and legacy
-APKG databases. Review logs and non-new scheduling are rejected. Modern compressed
+APKG databases. Review logs and non-new scheduling are rejected. Nonfragmented MP4 containers have bounded box validation and separate text
+metadata/padding inspection; unknown boxes, brands and binary metadata fail closed.
+Media samples require visual review. Recognizable image bytes are inspected even
+if a legacy image URL has a mismatched image suffix. MP4 upload receipts require
+the exact reviewed hash, just like images. Modern compressed
 Anki collections, unknown binary formats, corrupt or oversized archives fail
 closed. This is a known-signature check, not a universal personal-data classifier.
 
