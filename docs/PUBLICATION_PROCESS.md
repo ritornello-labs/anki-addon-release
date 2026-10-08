@@ -14,8 +14,10 @@ anki-publication-receipt dist/example.apkg --receipt dist/example.publication.js
 
 The source equivalents are `PYTHONPATH=/absolute/tool/src python3 -m
 anki_addon_release.publication_hooks`, `.publication`, and `.publication_receipt`.
-Hooks share the repository's local configuration across linked worktrees. Keep
-the installed tool available. Existing hooks are preserved: integrate them before
+Hooks share the repository's local configuration across linked worktrees. The
+installer freezes the checker in Git metadata so edits or upgrades to the shared
+tool cannot silently change another repo's gate. Reinstall after reviewing and
+testing an upgrade; hook files are replaced atomically. Existing hooks are preserved: integrate them before
 installing. Repeat setup on every machine; cloning does not install hooks. Do not
 bypass a hook, format error, or unavailable remote. Anki Publisher backups must
 be outside every Git checkout. `ANKI_PUBLICATION_PRIVATE_DIR` or local Git config

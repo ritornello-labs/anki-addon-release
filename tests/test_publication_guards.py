@@ -253,6 +253,21 @@ class GitTests(unittest.TestCase):
         self.cwd.__exit__(None, None, None)
         self.tmp.cleanup()
 
+    def test_installed_guard_is_frozen_against_later_source_edits(self):
+        from anki_addon_release import publication_hooks
+        package = Path(publication_hooks.__file__).parent
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            for name in ("__init__.py", "publication.py", "private_artifacts.py"):
+                (source / name).write_bytes((package / name).read_bytes())
+            with patch.object(publication_hooks, "__file__", str(source / "publication_hooks.py")):
+                hooks = publication_hooks.install()
+            (source / "publication.py").write_text("raise SystemExit(0)\n")
+            Path("renamed.txt").write_text('{"noteIds":[1],"cardIds":[2]}')
+            run("add", "renamed.txt")
+            result = subprocess.run([str(hooks / "pre-commit")], capture_output=True)
+            self.assertEqual(result.returncode, 1)
+
     def test_installer_preserves_existing_hook_configuration(self):
         from anki_addon_release.publication_hooks import install
         run("config", "core.hooksPath", "custom-hooks")
