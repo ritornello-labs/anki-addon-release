@@ -36,6 +36,13 @@ if a legacy image URL has a mismatched image suffix. MP4 upload receipts require
 the exact reviewed hash, just like images. Metadata-free MPEG-1/2 Layer III MP3 streams have bounded frame validation;
 ID3/APE tags, trailing bytes and unsupported frames fail closed. Audio content
 still needs media QA. See [RFC 3119](https://www.rfc-editor.org/rfc/rfc3119).
+Static TrueType fonts have bounded directory/checksum/padding validation and
+decoded name/glyph-name inspection. Unknown tables, SVG/metadata payloads, font
+collections, variable fonts and unsupported naming encodings fail closed. See
+the [OpenType container](https://learn.microsoft.com/en-us/typography/opentype/spec/otff)
+and [name table](https://learn.microsoft.com/en-us/typography/opentype/spec/name) specifications.
+This validates the publication container and known private signatures, not renderer
+safety or arbitrary personal information inside glyph data.
 Modern compressed
 Anki collections, unknown binary formats, corrupt or oversized archives fail
 closed. This is a known-signature check, not a universal personal-data classifier.

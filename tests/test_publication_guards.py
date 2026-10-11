@@ -522,3 +522,80 @@ class Mp3ValidationTests(unittest.TestCase):
         path=b"/"+b"home"+b"/"+b"fixture"+b"/file"
         data[30:30+len(path)]=path
         self.assertIn("personal-home-path",guard.content_reasons("generated.mp3",bytes(data)))
+
+
+class TrueTypePublicationTests(unittest.TestCase):
+    @staticmethod
+    def font(text="Fixture Font", *, platform=3, encoding=1, extra=None, post_name=None):
+        import struct
+        def checksum(raw):
+            return sum(x[0] for x in struct.iter_unpack(">I", raw + bytes(-len(raw) % 4))) & 0xFFFFFFFF
+        value = text.encode("utf-16-be" if platform in (0, 3) else "mac_roman")
+        names = struct.pack(">HHH", 0, 1, 18) + struct.pack(">HHHHHH", platform, encoding, 0, 1, len(value), 0) + value
+        head = bytearray(54); head[:4] = b"\0\1\0\0"; head[12:16] = b"_\x0f<\xf5"
+        maxp = b"\0\1\0\0\0\1" + bytes(26)
+        post = b"\0\3\0\0" + bytes(28)
+        if post_name is not None:
+            value = post_name.encode("mac_roman")
+            post = b"\0\2\0\0" + bytes(28) + struct.pack(">HH", 1, 258) + bytes([len(value)]) + value
+        tables = {tag: bytes(4) for tag in (b"cmap", b"glyf", b"hhea", b"hmtx", b"loca")}
+        tables.update({b"head":bytes(head), b"maxp":maxp, b"name":names, b"post":post})
+        if extra:
+            tables.update(extra)
+        count = len(tables); power = 1 << (count.bit_length() - 1)
+        header = struct.pack(">IHHHH", 0x10000, count, power * 16, count.bit_length() - 1, (count - power) * 16)
+        directory = bytearray(); payload = bytearray(); offset = 12 + count * 16; head_offset = None
+        for tag, raw in sorted(tables.items()):
+            directory += struct.pack(">4sIII", tag, checksum(raw), offset, len(raw))
+            if tag == b"head":head_offset = offset
+            chunk = raw + bytes(-len(raw) % 4); payload += chunk; offset += len(chunk)
+        result = bytearray(header + directory + payload)
+        struct.pack_into(">I", result, head_offset + 8, (0xB1B0AFBA - checksum(result)) & 0xFFFFFFFF)
+        return bytes(result)
+
+    def test_static_font_and_named_glyph_container_pass(self):
+        for font in (self.font(), self.font(platform=0, encoding=4), self.font(platform=1,encoding=0), self.font(post_name="sampleGlyph")):
+            self.assertEqual(guard.content_reasons("fixture.ttf",font),set())
+
+    def test_decoded_utf16_names_keep_private_signature_checks(self):
+        private = "/" + "home" + "/" + "fixture" + "/file"
+        token = "gh" + "p_" + "Z" * 36
+        for text, reason in ((private,"personal-home-path"),(token,"credential-signature")):
+            raw = self.font(text)
+            self.assertNotIn(text.encode(),raw)
+            self.assertIn(reason,guard.content_reasons("fixture.ttf",raw))
+
+    def test_glyph_names_keep_private_signature_checks(self):
+        private = "/" + "home" + "/" + "fixture" + "/file"
+        self.assertIn("personal-home-path",guard.content_reasons("fixture.ttf",self.font(post_name=private)))
+
+    def test_unknown_metadata_svg_and_variable_tables_fail(self):
+        for tag in (b"meta",b"SVG ",b"DSIG",b"fvar",b"????"):
+            self.assertIn("unsupported-ttf-table",guard.ttf_reasons(self.font(extra={tag:b"payload"})))
+
+    def test_truncation_trailing_bytes_and_bad_checksums_fail(self):
+        raw=self.font()
+        for bad in (b"",raw[:10],raw[:-1],raw + bytes(4),raw + b"junk",raw[:300]+bytes([raw[300]^1])+raw[301:]):
+            self.assertTrue(guard.ttf_reasons(bad))
+
+    def test_directory_overlap_bounds_duplicate_and_search_values_fail(self):
+        import struct
+        raw=self.font()
+        for pos,value in ((6,0),(12+8,4),(12+12,len(raw)),(12+16+8,len(raw)+4)):
+            bad=bytearray(raw);struct.pack_into(">H" if pos==6 else ">I",bad,pos,value)
+            self.assertTrue(guard.ttf_reasons(bytes(bad)))
+        bad=bytearray(raw);bad[28:32]=bad[12:16]
+        self.assertIn("invalid-ttf-directory",guard.ttf_reasons(bytes(bad)))
+
+    def test_unsupported_collections_and_name_encodings_fail(self):
+        raw=self.font()
+        self.assertTrue(guard.ttf_reasons(b"ttcf"+raw[4:]))
+        self.assertIn("unsupported-ttf-names",guard.ttf_reasons(self.font(platform=3,encoding=2)))
+        self.assertTrue(guard.ttf_reasons(self.font(text="bad\0name")))
+
+    def test_exact_font_receipt_does_not_approve_unknown_binary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/"fixture.ttf";p.write_bytes(self.font());receipt=prepare(p,set())
+            self.assertEqual(receipt['publication_check'],'passed')
+            p.write_bytes(p.read_bytes()+b"junk")
+            with self.assertRaises(ValueError):prepare(p,set())

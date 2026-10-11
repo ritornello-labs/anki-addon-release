@@ -17,6 +17,7 @@ import io
 import json
 import re
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -335,6 +336,118 @@ def mp3_reasons(data: bytes) -> set[str]:
     return set() if count >= 2 else {"invalid-mp3-stream"}
 
 
+
+def ttf_reasons(data: bytes) -> set[str]:
+    """Inspect bounded static TrueType containers and decoded naming metadata.
+
+    Only known binary glyph/layout tables are accepted. SVG, arbitrary metadata,
+    signatures, collections, variable fonts and unrecognized tables fail closed.
+    This is publication inspection, not a font renderer or a universal PII test.
+    """
+    allowed = {b"FFTM", b"GDEF", b"GPOS", b"GSUB", b"OS/2", b"cmap", b"cvt ",
+               b"fpgm", b"gasp", b"glyf", b"head", b"hhea", b"hmtx", b"kern",
+               b"loca", b"maxp", b"name", b"post", b"prep", b"vhea", b"vmtx"}
+    required = {b"head", b"hhea", b"hmtx", b"maxp", b"cmap", b"loca", b"glyf", b"name", b"post"}
+    def checksum(raw):
+        raw += bytes((-len(raw)) % 4)
+        return sum(word[0] for word in struct.iter_unpack(">I", raw)) & 0xFFFFFFFF
+    def text_reasons(raw):
+        reasons = set()
+        if HOME_PATH.search(raw):
+            reasons.add("personal-home-path")
+        if any(re.search(pattern, raw) for pattern in SECRET_PATTERNS):
+            reasons.add("credential-signature")
+        return reasons
+    try:
+        if len(data) < 12 or len(data) > 64 * 1024 * 1024 or len(data) % 4:
+            return {"invalid-ttf-container"}
+        version, count, search, selector, shift = struct.unpack_from(">IHHHH", data)
+        if version != 0x00010000 or not 1 <= count <= 64:
+            return {"unsupported-ttf-format"}
+        power = 1 << (count.bit_length() - 1)
+        if (search, selector, shift) != (power * 16, count.bit_length() - 1, (count - power) * 16):
+            return {"invalid-ttf-directory"}
+        end = 12 + count * 16
+        if end > len(data):
+            return {"invalid-ttf-directory"}
+        tables, intervals, previous = {}, [], b""
+        for i in range(count):
+            tag, check, offset, length = struct.unpack_from(">4sIII", data, 12 + i * 16)
+            if tag not in allowed:
+                return {"unsupported-ttf-table"}
+            if tag <= previous or offset % 4 or offset < end or not length or offset + length > len(data):
+                return {"invalid-ttf-directory"}
+            previous = tag
+            raw = data[offset:offset + length]
+            if tag == b"head":
+                if length != 54 or raw[:4] != b"\0\1\0\0" or raw[12:16] != b"_\x0f<\xf5":
+                    return {"invalid-ttf-head"}
+                raw = raw[:8] + bytes(4) + raw[12:]
+            if checksum(raw) != check:
+                return {"invalid-ttf-checksum"}
+            tables[tag] = data[offset:offset + length]
+            intervals.append((offset, offset + length))
+        if not required <= tables.keys():
+            return {"invalid-ttf-directory"}
+        for start, stop in sorted(intervals):
+            if start != (end + 3) // 4 * 4 or any(data[end:start]):
+                return {"invalid-ttf-padding"}
+            end = stop
+        if len(data) != (end + 3) // 4 * 4 or any(data[end:]) or checksum(data) != 0xB1B0AFBA:
+            return {"invalid-ttf-checksum"}
+        if b"FFTM" in tables and (len(tables[b"FFTM"]) != 28 or tables[b"FFTM"][:4] != b"\0\0\0\1"):
+            return {"unsupported-ttf-table"}
+        raw = tables[b"name"]
+        fmt, records, storage = struct.unpack_from(">HHH", raw)
+        if fmt != 0 or not 1 <= records <= 4096 or storage != 6 + records * 12 or storage > len(raw):
+            return {"unsupported-ttf-names"}
+        covered = bytearray(len(raw) - storage)
+        reasons = set()
+        for i in range(records):
+            platform, encoding, language, name_id, length, offset = struct.unpack_from(">HHHHHH", raw, 6 + i * 12)
+            if name_id > 25 or length > 8192 or offset + length > len(covered):
+                return {"unsupported-ttf-names"}
+            if (platform == 0 and encoding <= 6) or (platform == 3 and encoding in (1, 10)):
+                codec = "utf-16-be"
+            elif platform == 1 and encoding == 0:
+                codec = "mac_roman"
+            else:
+                return {"unsupported-ttf-names"}
+            text = raw[storage + offset:storage + offset + length].decode(codec)
+            if "\0" in text:
+                return {"unsupported-ttf-names"}
+            reasons |= text_reasons(text.encode("utf-8"))
+            covered[offset:offset + length] = bytes([1]) * length
+        if not all(covered):
+            return {"uninspected-ttf-names"}
+        raw = tables[b"post"]
+        post_version = struct.unpack_from(">I", raw)[0]
+        if post_version == 0x00030000 and len(raw) == 32:
+            return reasons
+        if post_version != 0x00020000 or len(raw) < 34:
+            return {"unsupported-ttf-post"}
+        glyphs = struct.unpack_from(">H", raw, 32)[0]
+        if len(tables[b"maxp"]) != 32 or tables[b"maxp"][:4] != b"\0\1\0\0" or struct.unpack_from(">H", tables[b"maxp"], 4)[0] != glyphs:
+            return {"invalid-ttf-post"}
+        end = 34 + glyphs * 2
+        if not glyphs or end > len(raw):
+            return {"invalid-ttf-post"}
+        indexes = [x[0] for x in struct.iter_unpack(">H", raw[34:end])]
+        custom = max(0, max(indexes) - 257)
+        if custom and set(x for x in indexes if x >= 258) != set(range(258, 258 + custom)):
+            return {"invalid-ttf-post"}
+        for _ in range(custom):
+            length = raw[end]; end += 1
+            if not length or end + length > len(raw):
+                return {"invalid-ttf-post"}
+            reasons |= text_reasons(raw[end:end + length].decode("mac_roman").encode("utf-8"))
+            end += length
+        if end != len(raw):
+            return {"uninspected-ttf-post"}
+        return reasons
+    except (struct.error, UnicodeError, IndexError):
+        return {"invalid-ttf-container"}
+
 def content_reasons(path: str, data: bytes, depth: int = 0) -> set[str]:
     reasons = {"private-artifact-path"} if private_path(path) else set()
     if len(data) > MAX_BYTES:
@@ -356,6 +469,8 @@ def content_reasons(path: str, data: bytes, depth: int = 0) -> set[str]:
             return reasons | archive_reasons(path, data, depth)
         except Exception:
             return reasons | {"uninspectable-archive"}
+    if suffix == ".ttf":
+        return reasons | ttf_reasons(data)
     if suffix == ".mp3":
         return reasons | mp3_reasons(data)
     if suffix == ".mp4" or data[4:8] == b"ftyp":
