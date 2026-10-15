@@ -1,5 +1,7 @@
 # anki-addon-release
 
+[Explore all Ritornello decks and add-ons](https://ritornello.dev/).
+
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab)](https://pypi.org/project/anki-addon-release/)
 [![Source on GitHub](https://img.shields.io/badge/source-GitHub-24292f)](https://github.com/ritornello-labs/anki-addon-release)
 
@@ -551,3 +553,5 @@ Version 0.2.5 adds shared staged-object, outgoing-history and release-artifact
 checks. Add-on packages are checked automatically; Publisher backups must stay
 outside Git. See [the publication process](docs/PUBLICATION_PROCESS.md) for local
 hook setup, quiet CI, exact-byte receipts and rollout requirements.
+
+Support continued development: [ritornello.dev/support](https://ritornello.dev/support).
